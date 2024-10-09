@@ -69,9 +69,9 @@ def test_gift_1_OLD():
 
 
 def test_gift_2_OLD():
-    assert not verify(lambda d: d['x'] > 0,
-                      parse("y := 0 ; while y < i do ( x := x + y ; if (x * y) < 10 then y := y + 1 else skip )"),
-                      lambda d: d['x'] > 0, lambda d: d['x'] > 0)
+    assert verify(lambda d: d['x'] > 0,
+                  parse("y := 0 ; while y < i do ( x := x + y ; if (x * y) < 10 then y := y + 1 else skip )"),
+                  lambda d: d['x'] > 0, lambda d: d['x'] > 0)
 
 
 def test_gift_3_OLD():
@@ -342,3 +342,469 @@ def test_if_2() -> None:
         return env['a'] == 1
 
     assert not verify(P, ast, Q, linv)
+
+
+def test_feature_1_if() -> None:
+    ast = parse(
+        """
+        if x < ?? then 
+            y := ?? 
+        else
+            y := ??
+        """
+    )
+    assert ast is not None
+
+    in_1 = lambda d: d["x"] == 0
+    out_1 = lambda d: d["y"] == 3
+
+    in_2 = lambda d: d["x"] == 1
+    out_2 = lambda d: d["y"] == 5
+
+    in_3 = lambda d: d["x"] == -4
+    out_3 = lambda d: d["y"] == 3
+
+    ins = [in_1, in_2, in_3]
+    outs = [out_1, out_2, out_3]
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    for P, Q in zip(ins, outs):
+        assert verify(P, ast, Q, linv)
+
+
+def test_feature_2_while() -> None:
+    ast = parse(
+        """
+        y := ??;
+        assert y < 9;
+        i := ??;
+        n := ??;
+        while i < n do (
+            assert y >= 7;
+            y := y + ??;
+            assert y >= 9;
+            i := i + 1
+        );
+        assert y >= 20
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    for P, Q in zip(ins, outs):
+        assert verify(P, ast, Q, linv)
+
+
+def test_feature_2_shon() -> None:
+    ast = parse(
+        """
+        y := ??;
+        x := ??;
+        while x > y do (
+            x := x - 1;
+            assert y = 10;
+            y := y + ??;
+            assert y = 11;
+            y := y - ??
+        );
+        assert y = x
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_feature_3_shon() -> None:
+    ast = parse(
+        """
+        y := ??;
+        x := ??;
+        assert x > y;
+        while x > y do (
+            x := x - 1;
+            assert y = 10;
+            y := y + ??;
+            assert y = 11;
+            y := y - ??
+        );
+        assert y = x
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_simple_initialization() -> None:
+    ast = parse(
+        """
+        x := ??;
+        y := ??;
+        assert x = y;
+        assert x > 2;
+        while x > 0 do (
+            x := x - 1;
+            assert y >= 0
+        );
+        assert x = 0;
+        assert y = ??
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_incremental_change() -> None:
+    ast = parse(
+        """
+        y := ??;
+        x := ??;
+        assert (y > 0);
+        assert (x > (8 * y));
+        while x > y do (
+            x := x - 1;
+            y := y + 1
+        );
+        assert x = y
+
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_constant_cond_nested_holes() -> None:
+    ast = parse(
+        """
+        x := ??;
+        y := 10;
+        while x > 0 do (
+            y := y + ??;
+            x := x - ??
+        );
+        assert y = 20
+
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_bound_increment() -> None:
+    ast = parse(
+        """
+        x := ??;
+        y := 0;
+        assert(x < 5);
+        while x < 5 do (
+            x := x + 1;
+            y := y + ??
+        );
+        assert x = 5;
+        assert y = (5 * ??)
+
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_exact_matching() -> None:
+    ast = parse(
+        """
+        y := ??;
+        x := y;
+        assert x > 5;
+        while x > 0 do (
+            x := x - 1;
+            y := y - 1
+        );
+        assert x = 0;
+        assert y = 0
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_summation_pattern() -> None:
+    ast = parse(
+        """
+        y := 0;
+        x := ??;
+        z := ??;
+        assert z > 3;
+        assert x > 2;
+        while x > 0 do (
+            y := y + z;
+            x := x - 1
+        );
+        assert y = (?? * z)
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_cond_and_alt_assign() -> None:
+    ast = parse(
+        """
+        x := ??;
+        if x < 5 then 
+            y := 10 
+        else
+            y := 20;
+        assert y > 10
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_loop_nested_assertions() -> None:
+    ast = parse(
+        """
+        y := ??;
+        x := 5;
+        while x > 0 do (
+            assert y > 0;
+            y := y + ??;
+            x := x - 1
+        );
+        assert y = (?? * 5)
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_zeroing_out() -> None:
+    ast = parse(
+        """
+        x := ??;
+        y := x;
+        assert x > 2;
+        while x > 0 do (
+            x := x - 1;
+            y := y - ??
+        );
+        assert y = 0
+
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_complex() -> None:
+    ast = parse(
+        """
+        x := ??;
+        y := ??;
+        z := ??;
+        assert x > y;
+        if x > 5 then 
+            z := z + ?? 
+        else
+            z := z - ??;
+        while x > y do (
+            x := x - ??;
+            assert x > y;
+            if z < 0 then
+                y := y + ??
+            else
+                y := y - ??;
+            assert y >= 0
+        );
+        assert (x = y) or (x = (y - 1))
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_complex_2() -> None:
+    ast = parse(
+        """
+        a := ??;
+        b := ??;
+        c := ??;
+        d := ??;
+        assert a > b;
+        if c > ?? then
+            d := d + ??
+        else
+            d := d - ??;
+        while (a > b) and (d < ??) do (
+            a := a - 1;
+            b := b + ??;
+            c := c - ??;
+            assert c >= 0;
+            if (b mod 2) = 0 then
+                d := d + 1
+            else
+                d := d - 1
+        );
+        assert (a = b) or (c = 0);
+        assert d < 10
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)

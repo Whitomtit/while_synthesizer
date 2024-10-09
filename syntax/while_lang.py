@@ -10,7 +10,7 @@ __all__ = ["parse"]
 class WhileParser:
 
     TOKENS = (
-        r"(if|then|else|while|do|skip|assert)(?![\w\d_]) "
+        r"(if|then|else|while|do|skip|assert|not|and|or|mod)(?![\w\d_]) "
         r"(?P<id>[^\W\d]\w*) "
         r"(?P<num>[+\-]?\d+) "
         r"(?P<op>[!<>]=|([+\-*/<>=])) "
@@ -22,7 +22,7 @@ class WhileParser:
     S1  ->   skip   |   id := E   |   if E then S else S1   |   while E do S1
     S1  ->   ( S )
     S1  ->   assert E
-    E   ->   E0   |   E0 op E0
+    E   ->   E0   |   E0 op E0   |   not E   |   E and E   |   E or E   |   E mod E
     E0  ->   id   |   num   |   hole
     E0  ->   ( E )
     """
@@ -49,10 +49,12 @@ class WhileParser:
             return self.postprocess(t.subtrees[0])
         elif t.root == "S1" and len(t.subtrees) == 2 and t.subtrees[0].root == "assert":
             return Tree("assert", [self.postprocess(t.subtrees[1])])
+        elif t.root == "E" and len(t.subtrees) == 2 and t.subtrees[0].root == "not":
+            return Tree("not", [self.postprocess(t.subtrees[1])])
         elif (
             t.root in ["S", "S1", "E"]
             and len(t.subtrees) == 3
-            and t.subtrees[1].root in [":=", ";", "op"]
+            and t.subtrees[1].root in [":=", ";", "op", "and", "or", "mod"]
         ):
             return Tree(
                 t.subtrees[1].subtrees[0].root,

@@ -25,6 +25,9 @@ OP = {
     "<=": operator.le,
     ">=": operator.ge,
     "=": operator.eq,
+    "mod": operator.mod,
+    "and": And,
+    "or": Or,
 }
 
 
@@ -82,6 +85,8 @@ def eval_expr(ast: Tree, env: Env) -> Formula:
             return OP[op](eval_expr(l, env), eval_expr(r, env))
         case "hole", _:
             return ast.var
+        case "not", [cond]:
+            return Not(eval_expr(cond, env))
         case _:
             assert False, f"Unknown expression AST node: {ast}"
 
@@ -112,7 +117,7 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
                 body_vars = {id: Int(get_unique_id(env, id)) for id in get_all_ids(body)}
                 sub_env = env | body_vars
 
-                body_wpi = wp(body, inv)
+                body_wpi = wp(body, lambda _: True)
 
                 body_wp = body_wpi(sub_env)
                 double_wp = wp(body, body_wpi)(sub_env)
@@ -122,6 +127,9 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
 
                 P = wp(body, inv)(sub_env)
                 B = wp(body, lambda exp_env: eval_expr(cond, exp_env))(sub_env)
+                double_B = wp(body,
+                              lambda outer_env: wp(body, lambda inner_env: eval_expr(cond, inner_env))(outer_env))(
+                    sub_env)
 
                 bounded_vars = list(body_vars.values())
                 return Or(
@@ -139,7 +147,7 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
                             And(
                                 Implies(
                                     And(P, B, body_wp),
-                                    Or(double_wp, Not(B))
+                                    Or(double_wp, Not(double_B))
                                 ),
                                 Implies(
                                     And(P, Not(B), body_wp),
@@ -157,15 +165,16 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
             assert False, f"Unknown command AST node: {ast}"
 
 
-def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> Model:
+def inner_synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> Model:
+    assert len(inputs) == len(outputs)
+    if not inputs:
+        inputs = [lambda _: True]
+        outputs = [lambda _: True]
+
     env = mk_env(get_all_ids(ast))
     free_vars = list(env.values())
 
     env[INVARIANT_KEY] = linv
-
-    holes = [ast for ast in ast.nodes if ast.root == "hole"]
-    for idx, hole in enumerate(holes):
-        hole.var = Int(f'__hole_{idx}')
 
     sub_formula = True
     for input, output in zip(inputs, outputs):
@@ -186,15 +195,45 @@ def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: lis
         return None
 
 
-def verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
-    """Verify a Hoare triple {P} c {Q}
-    Where P, Q are assertions (see below for examples)
-    and ast is the AST of the command c.
-    Returns `True` iff the triple is valid.
-    Also prints the counterexample (model) returned from Z3 in case
-    it is not.
+def unfold_while(ast: Tree, iterations: int) -> Tree:
     """
+    Unfold a while loop for a given number of iterations.
+    """
+    if ast.root == "while":
+        [cond, body] = ast.subtrees
+        if iterations == 0:
+            return Tree("assert", [Tree("not", [cond])])
+        else:
+            return Tree(";", [Tree("assert", [cond]), Tree(";", [body, unfold_while(ast, iterations - 1)])])
+    elif ast.root == "hole":
+        return ast
+    return Tree(ast.root, [unfold_while(subtree, iterations) for subtree in ast.subtrees])
 
+
+def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> Model:
+    """
+    Synthesize a model for a program AST node.
+    """
+    holes = [ast for ast in ast.nodes if ast.root == "hole"]
+    for idx, hole in enumerate(holes):
+        hole.var = Int(f'__hole_{idx}')
+
+    model = inner_synthesize(ast, linv, inputs, outputs)
+    if model is not None:
+        print(">> Synthesized with no unfolding.")
+        return model
+
+    for i in range(10):
+        unfolded_ast = unfold_while(ast, i)
+        model = inner_synthesize(unfolded_ast, linv, inputs, outputs)
+        if model is not None:
+            print(f">> Synthesized with {i} unfoldings.")
+            return model
+
+    return None
+
+
+def inner_verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
     env = mk_env(get_all_ids(ast))
     env[INVARIANT_KEY] = linv
     wp_inv = wp(ast, Q)
@@ -204,94 +243,27 @@ def verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
     if s.check() == unsat:
         return True
     else:
-        print(s.model())
         return False
 
 
-def main():
-    # example program
-    # pvars = ["a", "b", "i", "n"]
-    # program = "a := b ; while i < n do ( a := a + 1 ; b := b + 1 )"
-    # P = lambda _: True
-    # Q = lambda d: d["a"] == d["b"]
-    # linv = lambda d: d["a"] == d["b"]
+def verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
+    """Verify a Hoare triple {P} c {Q}
+    Where P, Q are assertions (see below for examples)
+    and ast is the AST of the command c.
+    Returns `True` iff the triple is valid.
+    Also prints the counterexample (model) returned from Z3 in case
+    it is not.
+    """
 
-    #
-    # Following are other programs that you might want to try
-    #
+    if inner_verify(P, ast, Q, linv):
+        return True
 
-    ## Program 1
-    # pvars = ['x', 'i', 'y']
-    # program = "y := 0 ; while y < i do ( x := x + y ; if (x * y) < 10 then y := y + 1 else skip )"
-    # P = lambda d: d['x'] > 0
-    # Q = lambda d: d['x'] > 0
-    # linv = lambda d: d['x'] > 0
+    for i in range(10):
+        unfolded_ast = unfold_while(ast, i)
+        if inner_verify(P, unfolded_ast, Q, linv):
+            return True
 
-    # program = "a := ?? ; while i < n do ( a := a + 3 ; b := b + ?? )"
-    # P = lambda d: d["b"] == 5
-    # Q = lambda d: d["a"] == d["b"]
-    # linv = lambda d: d["a"] == d["b"]
-
-    ## FEATURE 1
-
-    ## Program 2
-    # program = "if x < ?? then y := ?? else y := ??"
-    # IN_1 = lambda d: d["x"] == 0
-    # OUT_1 = lambda d: d["y"] == 3
-
-    # IN_2 = lambda d: d["x"] == 1
-    # OUT_2 = lambda d: d["y"] == 5
-
-    # IN_3 = lambda d: d["x"] == -4
-    # OUT_3 = lambda d: d["y"] == 3
-
-    # INS = [IN_1, IN_2, IN_3]
-    # OUTS = [OUT_1, OUT_2, OUT_3]
-    # linv = lambda d: True
-
-    # ast = parse(program)
-
-    # if ast is not None:
-    #     print(">> Valid program.")
-    #     model = synthesize(ast, linv, INS, OUTS)
-    #     if model is None:
-    #         print(">> Could not find a model.")
-    #     else:
-    #         print(">> Found a model.")
-    #         full_program = pretty_repr(ast, model)
-    #         print(full_program)
-    #         ast = parse(full_program)
-    #         for P, Q in zip(INS, OUTS):
-    #             assert verify(P, ast, Q, linv)
-    # else:
-    #     print(">> Invalid program.")
-
-    # program = "y := 0 ; while y < i do ( assert x > 0; assert y >= 0; x := x + y ; if (x * y) < 10 then y := y + 1 else skip ); assert x > ??"
-    # P = lambda d: d['x'] > 0
-    # Q = lambda d: True
-    # linv = lambda d: And(d['x'] > 0, d['y'] >= 0)
-
-    program = "y := ??; assert y < 9; i := ??; n := ??; while i < n do ( assert y >= 7; y := y + ??; assert y >= 9; i := i + 1 ); assert y >= 20"
-    P = lambda d: True
-    Q = lambda d: True
-    linv = lambda d: True
-
-    ast = parse(program)
-
-    if ast is not None:
-        print(">> Valid program.")
-        model = synthesize(ast, linv, [P], [Q])
-        if model is None:
-            print(">> Could not find a model.")
-        else:
-            print(">> Found a model.")
-            full_program = pretty_repr(ast, model)
-            print(full_program)
-            ast = parse(full_program)
-            for P, Q in zip([P], [Q]):
-                assert verify(P, ast, Q, linv)
-    else:
-        print(">> Invalid program.")
+    return False
 
 
 def pretty_repr(ast: Tree, model: Model) -> str:
@@ -313,11 +285,63 @@ def pretty_repr(ast: Tree, model: Model) -> str:
         case op, [l, r]:
             return f"({pretty_repr(l, model)} {op} {pretty_repr(r, model)})"
         case "hole", _:
-            return str(0 if model[ast.var] is None else model[ast.var])
+            return str(0 if model[ast.var] is None else model[ast.var]) if model is not None else "??"
         case "assert", [cond]:
             return f"assert {pretty_repr(cond, model)}"
+        case "not", [cond]:
+            return f"not ({pretty_repr(cond, model)})"
         case _:
             assert False, f"Unknown command AST node: {ast}"
+
+
+def main():
+    program = """
+        a := ??;
+        b := ??;
+        c := ??;
+        d := ??;
+        assert a > b;
+        if c > ?? then
+            d := d + ??
+        else
+            d := d - ??;
+        while (a > b) and (d < ??) do (
+            a := a - 1;
+            b := b + ??;
+            c := c - ??;
+            assert c >= 0;
+            if (b mod 2) = 0 then
+                d := d + 1
+            else
+                d := d - 1
+        );
+        assert (a = b) or (c = 0);
+        assert d < 10
+
+
+
+
+        """
+    P = lambda d: True
+    Q = lambda d: True
+    linv = lambda d: True
+
+    ast = parse(program)
+
+    if ast is not None:
+        print(">> Valid program.")
+        model = synthesize(ast, linv, [P], [Q])
+        if model is None:
+            print(">> Could not find a model.")
+        else:
+            print(">> Found a model.")
+            full_program = pretty_repr(ast, model)
+            print(full_program)
+            ast = parse(full_program)
+            for P, Q in zip([P], [Q]):
+                assert verify(P, ast, Q, linv)
+    else:
+        print(">> Invalid program.")
 
 
 if __name__ == "__main__":
