@@ -15,15 +15,17 @@ class WhileParser:
         r"(?P<num>[+\-]?\d+) "
         r"(?P<op>[!<>]=|([+\-*/<>=])) "
         r"(?P<hole>\?\?) "
-        r"[();]  :=".split()
+        r"[();\[\]]  :=".split()
     )
     GRAMMAR = r"""
     S   ->   S1     |   S1 ; S
-    S1  ->   skip   |   id := E   |   if E then S else S1   |   while E do S1
+    S1  ->   skip   |   Var := E   |   if E then S else S1   |   while E do S1
+    Var ->   id [ E ]
+    Var ->   id
     S1  ->   ( S )
     S1  ->   assert E
     E   ->   E0   |   E0 op E0   |   not E   |   E and E   |   E or E   |   E mod E
-    E0  ->   id   |   num   |   hole
+    E0  ->   Var   |   num   |   hole
     E0  ->   ( E )
     """
 
@@ -45,8 +47,10 @@ class WhileParser:
             return None
 
     def postprocess(self, t: Tree) -> Tree:
-        if t.root in ["γ", "S", "S1", "E", "E0"] and len(t.subtrees) == 1:
+        if t.root in ["γ", "S", "S1", "E", "E0", "Var"] and len(t.subtrees) == 1:
             return self.postprocess(t.subtrees[0])
+        elif t.root == "Var":
+            return Tree("array", [self.postprocess(t.subtrees[0]), self.postprocess(t.subtrees[2])])
         elif t.root == "S1" and len(t.subtrees) == 2 and t.subtrees[0].root == "assert":
             return Tree("assert", [self.postprocess(t.subtrees[1])])
         elif t.root == "E" and len(t.subtrees) == 2 and t.subtrees[0].root == "not":

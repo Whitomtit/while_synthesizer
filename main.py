@@ -31,9 +31,13 @@ def main():
         input_ast = None
         while input_ast is None:
             input_example = input()
+
+            if input_example == "":
+                break
             input_ast = parse_expr(input_example)
             if input_ast is None:
                 print("Invalid input. Try again")
+                continue
             if not get_all_ids(input_ast).issubset(get_all_ids(program_ast)):
                 print("Invalid input. Input may contain only variables from the program. Try again.")
                 input_ast = None
@@ -42,9 +46,13 @@ def main():
         output_ast = None
         while output_ast is None:
             output_example = input()
+
+            if output_example == "":
+                break
             output_ast = parse_expr(output_example)
             if output_ast is None:
                 print("Invalid output. Try again")
+                continue
             if not get_all_ids(output_ast).issubset(get_all_ids(program_ast)):
                 print("Invalid output. Output may contain only variables from the program. Try again.")
                 output_ast = None
@@ -66,8 +74,8 @@ def main():
             print("Invalid loop invariant. Try again")
 
     linv = lambda env: eval_expr(linv_ast, env) if linv_ast is not None else True
-    inputs = [lambda env: eval_expr(input_ast, env) for input_ast in inputs]
-    outputs = [lambda env: eval_expr(output_ast, env) for output_ast in outputs]
+    inputs = [lambda env: eval_expr(input_ast, env) if input_ast is not None else True for input_ast in inputs]
+    outputs = [lambda env: eval_expr(output_ast, env) if output_ast is not None else True for output_ast in outputs]
 
     if not inputs:
         inputs = [lambda env: True]

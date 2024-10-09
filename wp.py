@@ -2,7 +2,7 @@ import operator
 import typing
 from typing import Union
 
-from z3 import Int, IntVal, Implies, Not, And, Or, Solver, unsat, sat, Ast, ForAll, Model
+from z3 import Int, IntVal, Implies, Not, And, Or, Solver, unsat, sat, Ast, ForAll, Model, Array, IntSort, Store, Select, is_array
 
 from syntax.tree import Tree
 from syntax.while_lang import parse
@@ -41,11 +41,11 @@ def get_unique_id(env: Env, var: str) -> str:
     return f"{var}_{i}"
 
 
-def mk_env(pvars: set[PVar]) -> Env:
+def mk_env(pvars: set[PVar], parrays: set[PVar]) -> Env:
     """
     Create an environment with the given program variables.
     """
-    return {v: Int(v) for v in pvars}
+    return {v: Int(v) for v in pvars} | {v: Array(v, IntSort(), IntSort()) for v in parrays}
 
 
 def upd(d: Env, k: PVar, v: Formula) -> Env:
@@ -71,6 +71,17 @@ def get_all_ids(ast: Tree) -> set[str]:
     """
     return {get_id(ast) for ast in ast.nodes if ast.root == "id"}
 
+def get_array_ids(ast: Tree) -> set[str]:
+    """
+    Get all array identifiers from an AST.
+    """
+    return {get_id(ast.subtrees[0]) for ast in ast.nodes if ast.root == "array"}
+
+def get_non_array_ids(ast: Tree) -> set[str]:
+    """
+    Get all non-array identifiers from an AST.
+    """
+    return get_all_ids(ast) - get_array_ids(ast)
 
 def eval_expr(ast: Tree, env: Env) -> Formula:
     """
@@ -81,12 +92,14 @@ def eval_expr(ast: Tree, env: Env) -> Formula:
             return env[get_id(ast)]
         case "num", [num_tree]:
             return IntVal(num_tree.root)
-        case op, [l, r]:
-            return OP[op](eval_expr(l, env), eval_expr(r, env))
+        case "array", [id, idx]:
+            return Select(env[get_id(id)], eval_expr(idx, env))
         case "hole", _:
             return ast.var
         case "not", [cond]:
             return Not(eval_expr(cond, env))
+        case op, [l, r]:
+            return OP[op](eval_expr(l, env), eval_expr(r, env))
         case _:
             assert False, f"Unknown expression AST node: {ast}"
 
@@ -99,7 +112,21 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
         case "skip", _:
             return Q
         case ":=", [x, e]:
-            return lambda env: Q(upd(env, get_id(x), eval_expr(e, env)))
+            if x.root == "array":
+                def new_Q(env: Env) -> Formula:
+                    id = get_id(x.subtrees[0])
+                    idx = eval_expr(x.subtrees[1], env)
+                    return Q(upd(env, id, Store(env[id], idx, eval_expr(e, env))))
+                return new_Q
+                
+
+            def new_Q(env: Env) -> Formula:
+                # TODO: Maybe exception?
+                if is_array(env[get_id(x)]):
+                    assert is_array(env[get_id(e)])
+                return Q(upd(env, get_id(x), eval_expr(e, env)))
+            
+            return new_Q
         case ";", [c1, c2]:
             return wp(c1, wp(c2, Q))
         case "if", [cond, then_branch, else_branch]:
@@ -171,7 +198,7 @@ def inner_synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], output
         inputs = [lambda _: True]
         outputs = [lambda _: True]
 
-    env = mk_env(get_all_ids(ast))
+    env = mk_env(get_non_array_ids(ast), get_array_ids(ast))
     free_vars = list(env.values())
 
     env[INVARIANT_KEY] = linv
@@ -234,7 +261,7 @@ def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: lis
 
 
 def inner_verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
-    env = mk_env(get_all_ids(ast))
+    env = mk_env(get_non_array_ids(ast), get_array_ids(ast))
     env[INVARIANT_KEY] = linv
     wp_inv = wp(ast, Q)
 
@@ -282,48 +309,29 @@ def pretty_repr(ast: Tree, model: Model) -> str:
             return id_tree.root
         case "num", [num_tree]:
             return str(num_tree.root)
-        case op, [l, r]:
-            return f"({pretty_repr(l, model)} {op} {pretty_repr(r, model)})"
         case "hole", _:
             return str(0 if model[ast.var] is None else model[ast.var]) if model is not None else "??"
         case "assert", [cond]:
             return f"assert {pretty_repr(cond, model)}"
         case "not", [cond]:
             return f"not ({pretty_repr(cond, model)})"
+        case "array", [id, idx]:
+            return f"{pretty_repr(id, model)}[{pretty_repr(idx, model)}]"
+        case op, [l, r]:
+            return f"({pretty_repr(l, model)} {op} {pretty_repr(r, model)})"
         case _:
             assert False, f"Unknown command AST node: {ast}"
 
 
 def main():
     program = """
-        a := ??;
-        b := ??;
-        c := ??;
-        d := ??;
-        assert a > b;
-        if c > ?? then
-            d := d + ??
-        else
-            d := d - ??;
-        while (a > b) and (d < ??) do (
-            a := a - 1;
-            b := b + ??;
-            c := c - ??;
-            assert c >= 0;
-            if (b mod 2) = 0 then
-                d := d + 1
-            else
-                d := d - 1
-        );
-        assert (a = b) or (c = 0);
-        assert d < 10
-
-
-
-
+        a[??] := ??;
+        x := ??;
+        assert x > 0;
+        b := a[x + 5]
         """
     P = lambda d: True
-    Q = lambda d: True
+    Q = lambda d: d["b"] == 6
     linv = lambda d: True
 
     ast = parse(program)
