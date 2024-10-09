@@ -112,20 +112,42 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
                 body_vars = {id: Int(get_unique_id(env, id)) for id in get_all_ids(body)}
                 sub_env = env | body_vars
 
-                body_wp = wp(body, inv)(sub_env)
-                P_init = inv(env)
-                P = inv(sub_env)
-                B = eval_expr(cond, sub_env)
+                body_wpi = wp(body, inv)
 
-                return And(
-                    P_init,
+                body_wp = body_wpi(sub_env)
+                double_wp = wp(body, body_wpi)(sub_env)
+
+                P_init = inv(env)
+                b_init = eval_expr(cond, env)
+
+                P = wp(body, inv)(sub_env)
+                B = wp(body, lambda exp_env: eval_expr(cond, exp_env))(sub_env)
+
+                bounded_vars = list(body_vars.values())
+                return Or(
                     And(
-                        Implies(
-                            And(P, B),
-                            body_wp),
-                        Implies(
-                            And(P, Not(B)),
-                            Q(sub_env)))
+                        P_init,
+                        Not(b_init),
+                        Q(env)
+                    ),
+                    And(
+                        P_init,
+                        b_init,
+                        body_wpi(env),
+                        ForAll(
+                            list(body_vars.values()),
+                            And(
+                                Implies(
+                                    And(P, B, body_wp),
+                                    Or(double_wp, Not(B))
+                                ),
+                                Implies(
+                                    And(P, Not(B), body_wp),
+                                    wp(body, Q)(sub_env)
+                                )
+                            )
+                        ) if bounded_vars else True
+                    )
                 )
 
             return new_Q
