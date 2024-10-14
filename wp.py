@@ -2,7 +2,8 @@ import operator
 import typing
 from typing import Union
 
-from z3 import Int, IntVal, Implies, Not, And, Or, Solver, unsat, sat, Ast, ForAll, Model, Array, IntSort, Store, Select, is_array
+from z3 import Int, IntVal, Implies, Not, And, Or, Solver, unsat, sat, Ast, ForAll, Array, IntSort, Store, \
+    Select, is_array, ModelRef
 
 from syntax.tree import Tree
 from syntax.while_lang import parse
@@ -71,17 +72,20 @@ def get_all_ids(ast: Tree) -> set[str]:
     """
     return {get_id(ast) for ast in ast.nodes if ast.root == "id"}
 
+
 def get_array_ids(ast: Tree) -> set[str]:
     """
     Get all array identifiers from an AST.
     """
     return {get_id(ast.subtrees[0]) for ast in ast.nodes if ast.root == "array"}
 
+
 def get_non_array_ids(ast: Tree) -> set[str]:
     """
     Get all non-array identifiers from an AST.
     """
     return get_all_ids(ast) - get_array_ids(ast)
+
 
 def eval_expr(ast: Tree, env: Env) -> Formula:
     """
@@ -98,6 +102,10 @@ def eval_expr(ast: Tree, env: Env) -> Formula:
             return ast.var
         case "not", [cond]:
             return Not(eval_expr(cond, env))
+        case "false", _:
+            return False
+        case "true", _:
+            return True
         case op, [l, r]:
             return OP[op](eval_expr(l, env), eval_expr(r, env))
         case _:
@@ -117,15 +125,15 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
                     id = get_id(x.subtrees[0])
                     idx = eval_expr(x.subtrees[1], env)
                     return Q(upd(env, id, Store(env[id], idx, eval_expr(e, env))))
+
                 return new_Q
-                
 
             def new_Q(env: Env) -> Formula:
                 # TODO: Maybe exception?
                 if is_array(env[get_id(x)]):
                     assert is_array(env[get_id(e)])
                 return Q(upd(env, get_id(x), eval_expr(e, env)))
-            
+
             return new_Q
         case ";", [c1, c2]:
             return wp(c1, wp(c2, Q))
@@ -192,7 +200,7 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
             assert False, f"Unknown command AST node: {ast}"
 
 
-def inner_synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> Model:
+def inner_synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> ModelRef | None:
     assert len(inputs) == len(outputs)
     if not inputs:
         inputs = [lambda _: True]
@@ -237,7 +245,7 @@ def unfold_while(ast: Tree, iterations: int) -> Tree:
     return Tree(ast.root, [unfold_while(subtree, iterations) for subtree in ast.subtrees])
 
 
-def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> Model:
+def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: list[Invariant]) -> ModelRef | None:
     """
     Synthesize a model for a program AST node.
     """
@@ -293,30 +301,41 @@ def verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
     return False
 
 
-def pretty_repr(ast: Tree, model: Model) -> str:
+def pretty_repr(ast: Tree, model: ModelRef, depth=0) -> str:
+    indent = "    " * depth
     match ast.root, ast.subtrees:
         case "skip", _:
-            return "skip"
+            return indent + "skip"
         case ":=", [x, e]:
-            return pretty_repr(x, model) + " := " + pretty_repr(e, model)
+            return pretty_repr(x, model, depth) + " := " + pretty_repr(e, model)
         case ";", [c1, c2]:
-            return pretty_repr(c1, model) + "; " + pretty_repr(c2, model)
+            return (f"{pretty_repr(c1, model, depth)};\n"
+                    f"{pretty_repr(c2, model, depth)}")
         case "if", [cond, then_branch, else_branch]:
-            return f"if {pretty_repr(cond, model)} then ({pretty_repr(then_branch, model)}) else ({pretty_repr(else_branch, model)})"
+            return (f"{indent}if {pretty_repr(cond, model)} then (\n"
+                    f"{pretty_repr(then_branch, model, depth + 1)}\n"
+                    f"{indent}) else (\n"
+                    f"{pretty_repr(else_branch, model, depth + 1)})")
         case "while", [cond, body]:
-            return f"while {pretty_repr(cond, model)} do ({pretty_repr(body, model)})"
+            return (f"{indent}while {pretty_repr(cond, model)} do (\n"
+                    f"{pretty_repr(body, model, depth + 1)}\n"
+                    f"{indent})")
         case "id", [id_tree]:
-            return id_tree.root
+            return indent + id_tree.root
         case "num", [num_tree]:
-            return str(num_tree.root)
+            return indent + str(num_tree.root)
         case "hole", _:
-            return str(0 if model[ast.var] is None else model[ast.var]) if model is not None else "??"
+            return indent + str(0 if model[ast.var] is None else model[ast.var]) if model is not None else "??"
         case "assert", [cond]:
-            return f"assert {pretty_repr(cond, model)}"
+            return f"{indent}assert {pretty_repr(cond, model)}"
         case "not", [cond]:
-            return f"not ({pretty_repr(cond, model)})"
+            return f"{indent}not ({pretty_repr(cond, model)})"
         case "array", [id, idx]:
-            return f"{pretty_repr(id, model)}[{pretty_repr(idx, model)}]"
+            return f"{indent}{pretty_repr(id, model)}[{pretty_repr(idx, model)}]"
+        case "false", _:
+            return indent + "false"
+        case "true", _:
+            return indent + "true"
         case op, [l, r]:
             return f"({pretty_repr(l, model)} {op} {pretty_repr(r, model)})"
         case _:

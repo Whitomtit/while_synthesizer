@@ -10,8 +10,8 @@ __all__ = ["parse"]
 class WhileParser:
 
     TOKENS = (
-        r"(if|then|else|while|do|skip|assert|not|and|or|mod)(?![\w\d_]) "
-        r"(?P<id>[^\W\d]\w*) "
+        r"(if|then|else|while|do|skip|assert|not|and|or|mod|false|true)(?![\w\d_]) "
+        r"(?P<id>(?!false$|true$)[^\W\d]\w*) "
         r"(?P<num>[+\-]?\d+) "
         r"(?P<op>[!<>]=|([+\-*/<>=])) "
         r"(?P<hole>\?\?) "
@@ -25,7 +25,7 @@ class WhileParser:
     S1  ->   ( S )
     S1  ->   assert E
     E   ->   E0   |   E0 op E0   |   not E   |   E and E   |   E or E   |   E mod E
-    E0  ->   Var   |   num   |   hole
+    E0  ->   Var   |   num   |   hole   |   false   |   true
     E0  ->   ( E )
     """
 
