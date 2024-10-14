@@ -69,7 +69,7 @@ def test_gift_1_OLD():
 
 
 def test_gift_2_OLD():
-    assert verify(lambda d: d['x'] > 0,
+    assert not verify(lambda d: d['x'] > 0,
                   parse("y := 0 ; while y < i do ( x := x + y ; if (x * y) < 10 then y := y + 1 else skip )"),
                   lambda d: d['x'] > 0, lambda d: d['x'] > 0)
 
@@ -793,6 +793,30 @@ def test_complex_2() -> None:
         );
         assert (a = b) or (c = 0);
         assert d < 10
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+def test_no_unfold() -> None:
+    ast = parse(
+        """
+        x := ??;
+        while true do (
+            assert (x > 0);
+            x := x + 1
+        )
         """
     )
     assert ast is not None

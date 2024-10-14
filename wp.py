@@ -149,10 +149,12 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
             def new_Q(env: Env) -> Formula:
                 inv = env[INVARIANT_KEY]
 
-                body_vars = {id: Int(get_unique_id(env, id)) for id in get_all_ids(body)}
+                body_vars = {id: Int(get_unique_id(env, id)) for id in get_non_array_ids(body)}
+                body_vars = body_vars | {id: Array(get_unique_id(env, id), IntSort(), IntSort()) for id in
+                                         get_array_ids(body)}
                 sub_env = env | body_vars
 
-                body_wpi = wp(body, lambda _: True)
+                body_wpi = wp(body, inv)
 
                 body_wp = body_wpi(sub_env)
                 double_wp = wp(body, body_wpi)(sub_env)
@@ -160,11 +162,11 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
                 P_init = inv(env)
                 b_init = eval_expr(cond, env)
 
-                P = wp(body, inv)(sub_env)
-                B = wp(body, lambda exp_env: eval_expr(cond, exp_env))(sub_env)
-                double_B = wp(body,
-                              lambda outer_env: wp(body, lambda inner_env: eval_expr(cond, inner_env))(outer_env))(
-                    sub_env)
+                start_P = inv(sub_env)
+                start_B = eval_expr(cond, sub_env)
+
+                after_one_P = wp(body, inv)(sub_env)
+                after_one_B = wp(body, lambda exp_env: eval_expr(cond, exp_env))(sub_env)
 
                 bounded_vars = list(body_vars.values())
                 return Or(
@@ -178,14 +180,20 @@ def wp(ast: Tree, Q: Invariant) -> Invariant:
                         b_init,
                         body_wpi(env),
                         ForAll(
-                            list(body_vars.values()),
+                            bounded_vars,
                             And(
                                 Implies(
-                                    And(P, B, body_wp),
-                                    Or(double_wp, Not(double_B))
+                                    And(start_P, start_B, body_wp),
+                                    And(
+                                        after_one_P,
+                                        Or(
+                                            double_wp,
+                                            Not(after_one_B)
+                                        )
+                                    )
                                 ),
                                 Implies(
-                                    And(P, Not(B), body_wp),
+                                    And(after_one_P, Not(after_one_B), body_wp),
                                     wp(body, Q)(sub_env)
                                 )
                             )
@@ -258,7 +266,7 @@ def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: lis
         print(">> Synthesized with no unfolding.")
         return model
 
-    for i in range(10):
+    for i in range(1, 10):
         unfolded_ast = unfold_while(ast, i)
         model = inner_synthesize(unfolded_ast, linv, inputs, outputs)
         if model is not None:
@@ -293,7 +301,7 @@ def verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool:
     if inner_verify(P, ast, Q, linv):
         return True
 
-    for i in range(10):
+    for i in range(1, 10):
         unfolded_ast = unfold_while(ast, i)
         if inner_verify(P, unfolded_ast, Q, linv):
             return True
