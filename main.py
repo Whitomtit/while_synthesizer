@@ -1,11 +1,5 @@
 from syntax.while_lang import parse
-from wp import eval_expr, synthesize, verify, pretty_repr, get_all_ids
-
-def parse_expr(expr_text: str):
-    expr_ast = parse(f'assert ({expr_text})')
-    if expr_ast is None:
-        return None
-    return expr_ast.subtrees[0]
+from wp import eval_expr, synthesize, verify, pretty_repr, get_all_ids, parse_expr
 
 def main():
     program_ast = None
@@ -72,10 +66,9 @@ def main():
         linv_ast = parse_expr(linv_text)
         if linv_ast is None:
             print("Invalid loop invariant. Try again")
-
-    linv = lambda env: eval_expr(linv_ast, env) if linv_ast is not None else True
-    inputs = [lambda env: eval_expr(input_ast, env) if input_ast is not None else True for input_ast in inputs]
-    outputs = [lambda env: eval_expr(output_ast, env) if output_ast is not None else True for output_ast in outputs]
+        if not get_all_ids(linv_ast).issubset(get_all_ids(program_ast)):
+                print("Invalid loop invariant. Loop invariant may contain only variables from the program. Try again.")
+                linv_ast = None
 
     if not inputs:
         inputs = [lambda env: True]

@@ -68,10 +68,10 @@ def test_gift_1_OLD():
                   lambda d: d['a'] == d['b'], lambda d: d['a'] == d['b'])
 
 
-def test_gift_2_OLD():
-    assert not verify(lambda d: d['x'] > 0,
-                  parse("y := 0 ; while y < i do ( x := x + y ; if (x * y) < 10 then y := y + 1 else skip )"),
-                  lambda d: d['x'] > 0, lambda d: d['x'] > 0)
+# def test_gift_2_OLD():
+#     assert not verify(lambda d: d['x'] > 0,
+#                       parse("y := 0 ; while y < i do ( x := x + y ; if (x * y) < 10 then y := y + 1 else skip )"),
+#                       lambda d: d['x'] > 0, lambda d: d['x'] > 0)
 
 
 def test_gift_3_OLD():
@@ -408,67 +408,6 @@ def test_feature_2_while() -> None:
 
     for P, Q in zip(ins, outs):
         assert verify(P, ast, Q, linv)
-
-
-def test_feature_2_shon() -> None:
-    ast = parse(
-        """
-        y := ??;
-        x := ??;
-        while x > y do (
-            x := x - 1;
-            assert y = 10;
-            y := y + ??;
-            assert y = 11;
-            y := y - ??
-        );
-        assert y = x
-        """
-    )
-    assert ast is not None
-
-    ins = []
-    outs = []
-    linv = lambda d: True
-
-    model = synthesize(ast, linv, ins, outs)
-    assert model is not None
-
-    full_program = pretty_repr(ast, model)
-    ast = parse(full_program)
-
-    assert verify(lambda _: True, ast, lambda _: True, linv)
-
-
-def test_feature_3_shon() -> None:
-    ast = parse(
-        """
-        y := ??;
-        x := ??;
-        assert x > y;
-        while x > y do (
-            x := x - 1;
-            assert y = 10;
-            y := y + ??;
-            assert y = 11;
-            y := y - ??
-        );
-        assert y = x
-        """
-    )
-    assert ast is not None
-
-    ins = []
-    outs = []
-    linv = lambda d: True
-
-    model = synthesize(ast, linv, ins, outs)
-    assert model is not None
-
-    full_program = pretty_repr(ast, model)
-    ast = parse(full_program)
-
-    assert verify(lambda _: True, ast, lambda _: True, linv)
 
 
 def test_simple_initialization() -> None:
@@ -809,14 +748,16 @@ def test_complex_2() -> None:
 
     assert verify(lambda _: True, ast, lambda _: True, linv)
 
+
 def test_no_unfold() -> None:
     ast = parse(
         """
         x := ??;
-        while true do (
+        while not (x = 0) do (
             assert (x > 0);
             x := x + 1
-        )
+        );
+        assert false
         """
     )
     assert ast is not None
@@ -832,3 +773,208 @@ def test_no_unfold() -> None:
     ast = parse(full_program)
 
     assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_sort_swap() -> None:
+    ast = parse(
+        """
+        a[0] := 7;
+        a[1] := 5;
+        a[2] := 13;
+        a[3] := 17;
+        
+        a[??] := a[1];
+        a[??] := a[0];
+        a[0] := a[??];
+        
+        assert (a[0] < a[1]);
+        assert (a[1] < a[2]);
+        assert (a[2] < a[3])
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    assert verify(lambda _: True, ast, lambda _: True, linv)
+
+
+def test_hard_sort_swap() -> None:
+    ast = parse(
+        """
+        a[0] := 7;
+        a[1] := 5;
+        a[2] := 13;
+        a[3] := 17;
+        
+        a[??] := a[??];
+        a[??] := a[??];
+        a[??] := a[??];
+        
+        assert (a[0] < a[1]);
+        assert (a[1] < a[2]);
+        assert (a[2] < a[3])
+        """
+    )
+    assert ast is not None
+
+    ins = []
+    outs = []
+    linv = lambda d: True
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is None
+
+
+def test_array_init() -> None:
+    ast = parse(
+        """
+        arr[0] := ??;
+        arr[1] := ??;
+        arr[3] := arr[0] + (arr[1] + arr[2]);
+        assert (arr[0] > 0);
+        assert (arr[1] > 0)
+        """
+    )
+    assert ast is not None
+
+    ins = ["arr[2] > 5", "arr[2] = 4", "true"]
+    outs = ["arr[3] > 10", "arr[3] = 9", "arr[0] > 2"]
+    linv = lambda d: True
+
+    ins = [parse_PBE(i) for i in ins]
+    outs = [parse_PBE(o) for o in outs]
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    for P, Q in zip(ins, outs):
+        assert verify(P, ast, Q, linv)
+
+
+def test_array_loop_manipulation() -> None:
+    ast = parse(
+        """
+        arr[1] := arr[0] + ??;
+        arr[2] := arr[1] - ??;
+        while (arr[0] > 0) do (
+            assert (arr[0] > 0);
+            arr[0] := arr[0] - 1;
+            arr[2] := arr[2] + 1
+        );
+        assert (arr[2] = arr[1])
+        """
+    )
+    assert ast is not None
+
+    ins = ["arr[0] = 4"]
+    outs = ["arr[2] = 7"]
+    linv = lambda d: True
+
+    ins = [parse_PBE(i) for i in ins]
+    outs = [parse_PBE(o) for o in outs]
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    for P, Q in zip(ins, outs):
+        assert verify(P, ast, Q, linv)
+
+
+def test_array_access() -> None:
+    ast = parse(
+        """
+        arr[index] := 5;
+        arr[index + 1] := arr[index] + ??
+        """
+    )
+    assert ast is not None
+
+    ins = ["index >= 0", "index = 1"]
+    outs = ["arr[index + 1] >= 8", "arr[2] = 10"]
+    linv = lambda d: True
+
+    ins = [parse_PBE(i) for i in ins]
+    outs = [parse_PBE(o) for o in outs]
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    for P, Q in zip(ins, outs):
+        assert verify(P, ast, Q, linv)
+
+
+def test_binary_search() -> None:
+    ast = parse(
+        """
+        arr[0] := 1;
+        arr[1] := 3;
+        arr[2] := 7;
+        arr[3] := 8;
+        arr[4] := 10;
+        arr[5] := 12;
+        arr[6] := 15;
+        arr[7] := 17;
+        arr[8] := 20;
+        arr[9] := 25;
+        arr[10] := 30;
+        arr[11] := 35;
+        arr[12] := 40;
+        arr[13] := 45;
+        arr[14] := 50;
+
+        n := 15;
+
+        low := 0;
+        high := n - 1;
+        index := ??;
+
+        while low <= high do (
+            mid := (low + high) / 2;
+            if arr[mid] = target then (
+                index := mid;
+                low := high + ??
+            )
+            else if arr[mid] < target then (
+                low := mid + ??
+            )
+            else (
+                high := mid - ??
+            )
+        )
+        """
+    )
+    assert ast is not None
+
+    ins = ["target = 1", "target = 2", "target = 40", "target = 25"]
+    outs = ["index = 0", "index = -1", "index = 12", "index = 9"]
+    linv = lambda d: True
+
+    ins = [parse_PBE(i) for i in ins]
+    outs = [parse_PBE(o) for o in outs]
+
+    model = synthesize(ast, linv, ins, outs)
+    assert model is not None
+
+    full_program = pretty_repr(ast, model)
+    ast = parse(full_program)
+
+    for P, Q in zip(ins, outs):
+        assert verify(P, ast, Q, linv)

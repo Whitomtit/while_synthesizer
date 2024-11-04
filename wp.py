@@ -13,13 +13,16 @@ PVar: typing.TypeAlias = str
 Env: typing.TypeAlias = dict[PVar, Union[Formula, 'Invariant']]
 Invariant: typing.TypeAlias = typing.Callable[[Env], Formula]
 
+MAX_UNFOLDING = 10
+TIMEOUT = 2000
+
 INVARIANT_KEY = "linv"
 
 OP = {
     "+": operator.add,
     "-": operator.sub,
     "*": operator.mul,
-    "/": operator.floordiv,
+    "/": operator.truediv,
     "!=": operator.ne,
     ">": operator.gt,
     "<": operator.lt,
@@ -225,7 +228,7 @@ def inner_synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], output
         sub_formula = And(sub_formula, Implies(input(env), wp_out(env)))
 
     s = Solver()
-
+    s.set("timeout", TIMEOUT)
     s.add(
         ForAll(
             free_vars,
@@ -247,7 +250,7 @@ def unfold_while(ast: Tree, iterations: int) -> Tree:
         if iterations == 0:
             return Tree("assert", [Tree("not", [cond])])
         else:
-            return Tree(";", [Tree("assert", [cond]), Tree(";", [body, unfold_while(ast, iterations - 1)])])
+            return Tree(";", [Tree("if", [cond, body, Tree("skip", [])]), unfold_while(ast, iterations - 1)])
     elif ast.root == "hole":
         return ast
     return Tree(ast.root, [unfold_while(subtree, iterations) for subtree in ast.subtrees])
@@ -266,7 +269,7 @@ def synthesize(ast: Tree, linv: Invariant, inputs: list[Invariant], outputs: lis
         print(">> Synthesized with no unfolding.")
         return model
 
-    for i in range(1, 10):
+    for i in range(1, MAX_UNFOLDING):
         unfolded_ast = unfold_while(ast, i)
         model = inner_synthesize(unfolded_ast, linv, inputs, outputs)
         if model is not None:
@@ -282,6 +285,7 @@ def inner_verify(P: Invariant, ast: Tree, Q: Invariant, linv: Invariant) -> bool
     wp_inv = wp(ast, Q)
 
     s = Solver()
+    s.set("timeout", TIMEOUT)
     s.add(Not(Implies(P(env), wp_inv(env))))
     if s.check() == unsat:
         return True
@@ -349,35 +353,14 @@ def pretty_repr(ast: Tree, model: ModelRef, depth=0) -> str:
         case _:
             assert False, f"Unknown command AST node: {ast}"
 
+def parse_expr(expr_text: str):
+    expr_ast = parse(f'assert ({expr_text})')
+    if expr_ast is None:
+        return None
+    return expr_ast.subtrees[0]
 
-def main():
-    program = """
-        a[??] := ??;
-        x := ??;
-        assert x > 0;
-        b := a[x + 5]
-        """
-    P = lambda d: True
-    Q = lambda d: d["b"] == 6
-    linv = lambda d: True
-
-    ast = parse(program)
-
-    if ast is not None:
-        print(">> Valid program.")
-        model = synthesize(ast, linv, [P], [Q])
-        if model is None:
-            print(">> Could not find a model.")
-        else:
-            print(">> Found a model.")
-            full_program = pretty_repr(ast, model)
-            print(full_program)
-            ast = parse(full_program)
-            for P, Q in zip([P], [Q]):
-                assert verify(P, ast, Q, linv)
-    else:
-        print(">> Invalid program.")
-
-
-if __name__ == "__main__":
-    main()
+def parse_PBE(PBE_text: str) -> Invariant:
+    expr_ast = parse_expr(PBE_text)
+    if expr_ast is None:
+        return None
+    return lambda env: eval_expr(expr_ast, env)
